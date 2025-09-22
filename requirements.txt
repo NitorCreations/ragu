@@ -1,0 +1,7 @@
+pymupdf
+pdfplumber
+layoutparser
+sentence-transformers
+chromadb
+llama-cpp-python --global-option="build_ext" --global-option="-DLLAMA_METAL=on"
+gradio
