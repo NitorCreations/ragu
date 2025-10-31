@@ -5,11 +5,14 @@ from sentence_transformers import SentenceTransformer
 from urllib.parse import urljoin, urlparse
 import pymupdf  # For PDF processing
 import io
+import os
 import unicodedata
 from langdetect import detect
 import pycountry
+from playwright.sync_api import sync_playwright
 
-EMBED_MODEL_NAME = "/Users/rikusarlin/models/e5-base"                       # Change this to your local dir
+EMBED_MODEL_NAME = "/Users/rikusarlin/models/e5-base"  # Change this to your local dir
+DOCUMENTS_ROOT = "/Users/rikusarlin/Documents/ragu"         # Change this to your local dir
 
 def to_iso639_1(code: str) -> str:
     """Normalize a language code to 2-letter ISO 639-1 if possible."""
@@ -39,6 +42,22 @@ def to_iso639_3(code: str) -> str:
         pass
     return code.lower()
 
+
+def save_webpage_as_pdf_headless(url, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    safe_name = url.replace("https://", "").replace("http://", "").replace("/", "_")
+    output_path = os.path.join(output_dir, f"{safe_name}.pdf")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(url, timeout=60000)
+        page.pdf(path=output_path, format="A4")
+        browser.close()
+
+    print(f"✅ Rendered {url} to {output_path}")
+    return output_path
+
 def generate_sequential_urls(base_url, start_id, end_id, width=5):
     """Generate URLs by appending zero-padded numbers to a base URL."""
     return [f"{base_url}{i:0{width}d}" for i in range(start_id, end_id + 1)]
@@ -56,7 +75,32 @@ def is_valid_url(url):
     parsed = urlparse(url)
     return bool(parsed.netloc) and bool(parsed.scheme)
 
-def get_all_website_links(url, internal_urls, root_url):
+def create_session_with_cookies(cookies_input: str | None) -> requests.Session:
+    """
+    Create a requests.Session and populate it with cookies from either
+    a plain string "name=value; name2=value2" or a file path.
+    """
+    session = requests.Session()
+    if not cookies_input:
+        return session
+
+    # If it's a path to a file, load contents
+    import os
+    if os.path.exists(cookies_input):
+        with open(cookies_input, "r") as f:
+            cookies_input = f.read().strip()
+
+    # Parse key=value pairs
+    for pair in cookies_input.split(";"):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        name, value = pair.split("=", 1)
+        session.cookies.set(name.strip(), value.strip())
+
+    return session
+
+def get_all_website_links(url, internal_urls, root_url, session):
     urls = set()
     try:
         response = requests.get(url)
@@ -92,10 +136,11 @@ def get_all_website_links(url, internal_urls, root_url):
 
     return urls
 
-def crawl(url, max_urls=50):
+def crawl(url, max_urls=50, session=None):
     total_urls_visited = 0
     internal_urls = set()
     root_url = url
+    session = session or requests.Session()
 
     def crawl_recursive(url_to_crawl):
         nonlocal total_urls_visited
@@ -106,7 +151,7 @@ def crawl(url, max_urls=50):
             return
 
         total_urls_visited += 1
-        links = get_all_website_links(url_to_crawl, internal_urls, root_url)
+        links = get_all_website_links(url_to_crawl, internal_urls, root_url, session)
         for link in links:
             if link not in internal_urls:
                 internal_urls.add(link)
@@ -117,7 +162,12 @@ def crawl(url, max_urls=50):
     crawl_recursive(url)
     return internal_urls
 
-def ingest_web_content(url, collection_name, lang="en", id_range=None):
+def ingest_web_content(url, collection_name, lang="en", id_range=None, audiences=None, cookies=None):
+    if audiences is None:
+        audiences = ["public"]
+    audience_str = ",".join(audiences)
+    session = create_session_with_cookies(cookies)
+
     """
     Ingests web content from a given URL into the vector database.
     If id_range is given, generate sequential URLs instead of crawling.
@@ -138,7 +188,7 @@ def ingest_web_content(url, collection_name, lang="en", id_range=None):
         start_id, end_id = id_range
         urls_to_ingest = generate_sequential_urls(url, start_id, end_id)
     else:
-        urls_to_ingest = crawl(url)
+        urls_to_ingest = crawl(url, session=session)
 
     for web_url in urls_to_ingest:
         try:
@@ -178,7 +228,8 @@ def ingest_web_content(url, collection_name, lang="en", id_range=None):
                                     "chunk_index": idx,
                                     "lang": detected_lang,
                                     "type": "web-pdf",
-                                    "title": title
+                                    "title": title,
+                                    "audiences": audience_str
                                 }],
                                 ids=[uid]
                             )
@@ -187,6 +238,7 @@ def ingest_web_content(url, collection_name, lang="en", id_range=None):
 
             else:
                 # Process HTML
+                pdf_snapshot = save_webpage_as_pdf_headless(final_url, DOCUMENTS_ROOT+"/"+collection_name)
                 soup = BeautifulSoup(response.content, 'html.parser')
                 title = soup.title.string if soup.title else ''
                 text_content = normalize_text(soup.get_text(separator=' ', strip=True))
@@ -201,16 +253,20 @@ def ingest_web_content(url, collection_name, lang="en", id_range=None):
                     for idx, chunk in enumerate(chunks):
                         embedding = model.encode(chunk).tolist()
                         uid = f"{final_url}_c{idx}"
+                        metadata = {
+                            "source": final_url,
+                            "chunk_index": idx,
+                            "lang": detected_lang,
+                            "type": "web",
+                            "title": title,
+                            "audiences": audience_str,
+                        }
+                        if pdf_snapshot:
+                            metadata["pdf_snapshot"] = pdf_snapshot
                         collection.add(
                             embeddings=[embedding],
                             documents=[chunk],
-                            metadatas=[{
-                                "source": final_url,
-                                "chunk_index": idx,
-                                "lang": detected_lang,
-                                "type": "web",
-                                "title": title
-                            }],
+                            metadatas=[metadata],
                             ids=[uid]
                             )
                     print(f"Successfully ingested: {final_url}")
@@ -230,11 +286,24 @@ if __name__ == "__main__":
     parser.add_argument("--lang", type=str, default="en", help="The language of the content to be ingested.")
     parser.add_argument("--range", nargs=2, type=int, help="Start and end ID for sequential ingestion (e.g. 1 1425)")
     parser.add_argument("--width", type=int, default=5, help="Zero-padding width for numeric IDs (default=5)")
+    parser.add_argument(
+        "--audiences",
+        nargs="*",
+        default=["public"],
+        help="List of audiences for access control. Default: public"
+    )
+    parser.add_argument(
+        "--cookies",
+        type=str,
+        help="Cookies string (e.g. 'name1=value1; name2=value2') or path to a cookies.txt file"
+    )
     args = parser.parse_args()
 
     ingest_web_content(
         args.url,
         args.collection,
         args.lang,
-        tuple(args.range) if args.range else None
+        tuple(args.range) if args.range else None,
+        audiences=args.audiences,
+        cookies=args.cookies
     )

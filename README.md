@@ -23,6 +23,7 @@ export TOKENIZERS_PARALLELISM=true
 You need to install requirements first. I suggest a clean virtual environment for this.
 ```
 pip install -r requirements.txt
+playwright install chromium
 ```
 
 You need to have a suitable LLM model in GGUF format downloaded. Its path needs to speacified
@@ -50,7 +51,7 @@ ingest.py requires one or more directory names. The directory names should follo
 Language needs to be specified with 2-letter ISO code ("en", "fi" etc.)
 For example, if you have car related documents in English, you could invoke as follows:
 ```
-python ingest.py /Users/myusername/Documents/Cars_en
+python ingest.py /Users/myusername/Documents/Cars --lang en --collection Cars
 ```
 
 This should create a local Chroma DB with embeddings of ingested PDF files, page by page.
@@ -59,17 +60,26 @@ Running ingestion will take some time, depending on the number and size of the f
 the performance of your computer. As an example, processing 28 PDF files, each of which is 200 to 400
 pages long, takes in the order of 10 minutes in powerful M4 MacBook Pro, and produces 150 MB Chroma DB.
 
+If there is limit to limit results to certain audiences, you can specify "audiences". For example, if you want
+to control access to documents regarding your network, you can specify audiences like "network" and "ops" and "admin",
+implying that these documents are restricted to these audiences. By default audience
+is "public", meaning that everybody can access ingested documents. UI searches by default for public results,
+but you can select an audience to extend the public search with results limited to the given audience(s).
+```
+python ingest.py /Users/myusername/Documents/Network_documentation --lang en --Collection "Network_documentation" --audiences network ops admin
+```
+
 # Tokenizing web material
 Web material is ingested by crawling through web site in some language recursively, transforming web pages
 to text and then tokenizing the text. For example, to ingest web pages of Kela, do the following:
 ```
-python ingest_web.py https://www.kela.fi --collection Kela --lang fi
+python ingest.py https://www.kela.fi --collection Kela --lang fi
 ```
 
 In some cases interesting material is not linked from top page. For these cases we can try "ranged fetch" that
 dynamically builds URLs and fetches contents. Use parameters "range" and "width" here:
 ```
-python ingest_web.py "https://www.terveyskirjasto.fi/dlk" --collection Terveys --lang fi --range 1 1425 --width 5
+python ingest.py "https://www.terveyskirjasto.fi/dlk" --collection Terveys --lang fi --range 1 1425 --width 5
 ```
 
 This will crawl web addresses 
@@ -77,6 +87,22 @@ This will crawl web addresses
 https://www.terveyskirjasto.fi/dlk00001
 ...
 https://www.terveyskirjasto.fi/dlk01425
+```
+
+Some sites require authentication. For a hopefully general solution, we support reading in cookies file and
+crawling a site through "cookie session". This happens as follows:
+```
+python ingest.py "https://www.globalsecurity.org/military/world/russia/" --collection Equipment --lang en --cookies ./cookies.txt
+```
+The cookies you can catch from your browser after logging in. You can also specify a "cookie string" in this format
+```
+--cookies "sessionid=abc123; csrftoken=xyz987"
+```
+
+As with PDF ingestion, you can specify one or more "audiences" for ingested pages. If you don't specify an audience,
+the audience will be "public". For example, reading in Nitor intra (requires cookies)
+```
+python ingest.py "https://nitor.atlassian.net/wiki/home" --collection NitorIntra --lang en --audiences nitorean -cookies ../cookies.txt
 ```
 
 There are surely other types of "difficult to crawl" sites. You may have to figure out their logic yourself and
@@ -93,20 +119,20 @@ and the power of your computer. For large sites this can take plenty of time and
 Chat-like graphical interface allows user to make searches to tokenized material, and follow the
 provided references to source material (pages of PDF files, or links to web pages). For PDF files 
 we need access to source material as well. The source to use is decided based on the "theme" that you choose
-(which actually selects your Chroma database) and the language of your question.
+(which actually selects your Chroma database) and the language of your question (which is automatically detected).
+Furthermore, you can a specify an "audience" which defaults to "public". Results are filtered so that if 
+audience is given, you will also see results permitted to given audience. Everybody will see results from
+"public" sources, that is, material that is not restricted to any audience.
 
 Running
 ```
-python chat_ui.py
+python ui.py
 ```
 
 After this, you can move to [http://localhost:7860](http://localhost:7860/).
 
 You will get the LLM answer on lower left.
 
-For PDF results, you will get a list of references on right hand side, with the first
-reference selected (the page of PDF document referenced,). You can choose difference reference, and 
+You will get a list of references on right hand side, with the first
+reference selected (the page of the PDF document referenced,). You can choose difference reference, and 
 move within the selected PDF file.
-
-For web results, you will get a list of links, each of which will open a the page in question to new tab.
-Of course, this requires a live network connection.

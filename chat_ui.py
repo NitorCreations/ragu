@@ -53,7 +53,7 @@ def render_pdf_page(file_path, page_no):
         return None
 
 # ---------- Query & References ----------
-def answer_query_with_refs(query, theme):
+def answer_query_with_refs(query, theme, selected_audience):
     query = normalize_text(query)
     detected_lang = detect(query)
     collections = discover_collections(DOC_DIR)
@@ -72,8 +72,27 @@ def answer_query_with_refs(query, theme):
 
     q_emb = embedder.encode(query).tolist()
     res = collection.query(query_embeddings=[q_emb], n_results=TOP_K, include=["metadatas","documents"])
+
     docs = res["documents"][0]
     metas = res["metadatas"][0]
+
+    # Filter results with audience
+    filtered_docs = []
+    filtered_metas = []
+    for d, m in zip(docs, metas):
+        audiences = m.get("audiences") or "public"
+        audience_list = [a.strip() for a in audiences.split(",")]
+
+        if "public" in audience_list or selected_audience in audience_list:
+            filtered_docs.append(d)
+            filtered_metas.append(m)
+
+    docs = filtered_docs
+    metas = filtered_metas
+
+    if not docs:
+        return f"❌ No results available for audience '{selected_audience}'", [], {}, {}, {}, \
+            gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=False)
 
     references = {}
     context = ""
@@ -220,11 +239,17 @@ def navigate_pdf(action, pdf_state):
 
 # ---------- Gradio UI ----------
 with gr.Blocks() as demo:
-    gr.Markdown("## Local RAG Chat (Multilingual)")
+    gr.Markdown("Local RAG")
 
     with gr.Row():
         with gr.Column():
             theme_dropdown = gr.Dropdown(label="Theme", choices=list(discover_collections().keys()), value=None)
+            audience_dropdown = gr.Dropdown(
+                label="Audience",
+                choices=["public", "confidential", "nitorean"],
+                value="public",
+                interactive=True
+            )
             query_input = gr.Textbox(label="Question", lines=1, max_lines=3, placeholder="Ask something...")
             submit_btn = gr.Button("Ask", variant="primary")
             answer_output = gr.Textbox(label="Answer", lines=20, max_lines=25)
@@ -246,10 +271,12 @@ with gr.Blocks() as demo:
     pdf_state = gr.State()
     ref_map_state = gr.State()
 
-    submit_btn.click(answer_query_with_refs,
-                     inputs=[query_input, theme_dropdown],
-                     outputs=[answer_output, ref_dropdown, refs_state, pdf_state, ref_map_state,
-                              pdf_image_output, btn_first, web_links_output, link_output])
+    submit_btn.click(
+        answer_query_with_refs,
+        inputs=[query_input, theme_dropdown, audience_dropdown],
+        outputs=[answer_output, ref_dropdown, refs_state, pdf_state, ref_map_state,
+                 pdf_image_output, btn_first, web_links_output, link_output]
+    )
     ref_dropdown.change(show_result,
                         inputs=[ref_dropdown, refs_state, pdf_state, ref_map_state],
                         outputs=[pdf_image_output, pdf_state, link_output, btn_first, btn_prev, btn_next, btn_last])
