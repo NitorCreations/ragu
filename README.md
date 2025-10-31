@@ -90,11 +90,8 @@ https://www.terveyskirjasto.fi/dlk01425
 ```
 
 Some sites require authentication. For a hopefully general solution, we support reading in cookies file and
-crawling a site through "cookie session". This happens as follows:
-```
-python ingest.py "https://www.globalsecurity.org/military/world/russia/" --collection Equipment --lang en --cookies ./cookies.txt
-```
-The cookies you can catch from your browser after logging in. You can also specify a "cookie string" in this format
+crawling a site through "cookie session". The cookies you can catch from your browser after logging in. An example shortly.
+You can also specify a "cookie string" in this format
 ```
 --cookies "sessionid=abc123; csrftoken=xyz987"
 ```
