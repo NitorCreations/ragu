@@ -76,19 +76,6 @@ to text and then tokenizing the text. For example, to ingest web pages of Kela, 
 python ingest.py https://www.kela.fi --collection Kela --lang fi
 ```
 
-In some cases interesting material is not linked from top page. For these cases we can try "ranged fetch" that
-dynamically builds URLs and fetches contents. Use parameters "range" and "width" here:
-```
-python ingest.py "https://www.terveyskirjasto.fi/dlk" --collection Terveys --lang fi --range 1 1425 --width 5
-```
-
-This will crawl web addresses 
-```
-https://www.terveyskirjasto.fi/dlk00001
-...
-https://www.terveyskirjasto.fi/dlk01425
-```
-
 Some sites require authentication. For a hopefully general solution, we support reading in cookies file and
 crawling a site through "cookie session". The cookies you can catch from your browser after logging in. An example shortly.
 You can also specify a "cookie string" in this format
